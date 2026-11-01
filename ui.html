@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>省电专家</title>
+<style>
+  :root{
+    --bg:#0f1216; --card:#171c23; --line:#232a34; --txt:#e6edf3; --dim:#8b98a5;
+    --ok:#2ea043; --ok-dim:#1a7f37; --warn:#d29922; --bad:#da3633; --blue:#388bfd;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font:14px/1.5 "Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+       padding:22px;max-width:960px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px;font-weight:600}
+  .sub{color:var(--dim);font-size:12px;margin-bottom:20px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+  .card .k{color:var(--dim);font-size:12px;margin-bottom:6px}
+  .card .v{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
+  .card .v small{font-size:12px;font-weight:400;color:var(--dim)}
+  .bar{height:5px;background:#0b0e12;border-radius:3px;margin-top:9px;overflow:hidden}
+  .bar > i{display:block;height:100%;width:0;background:var(--blue);transition:width .4s}
+  .wide{grid-column:span 2}
+  .actions{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:6px}
+  @media (max-width:720px){ .actions{grid-template-columns:1fr} }
+  button{font:inherit;border:1px solid var(--line);border-radius:10px;padding:16px;
+         cursor:pointer;background:var(--card);color:var(--txt);text-align:left;
+         transition:background .15s,border-color .15s}
+  button:hover{border-color:#3a4552}
+  button .t{font-size:15px;font-weight:600;display:block;margin-bottom:4px}
+  button .s{font-size:12px;color:var(--dim)}
+  button.on{background:rgba(46,160,67,.12);border-color:var(--ok)}
+  button.on .t{color:#3fb950}
+  button.off{background:rgba(218,54,51,.10);border-color:var(--bad)}
+  button.off .t{color:#f85149}
+  .row{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;
+       color:var(--dim);font-size:12px;margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
+  .pill{display:inline-block;padding:1px 7px;border-radius:99px;font-size:11px;
+        border:1px solid var(--line);color:var(--dim)}
+  .pill.dark{border-color:#3a4552;color:#9aa7b4}
+  .pill.bright{border-color:#6b5a1f;color:var(--warn)}
+  .err{color:var(--bad);font-size:12px}
+</style>
+</head>
+<body>
+  <h1>省电专家 <span id="st" class="pill">连接中…</span></h1>
+  <div class="sub">屏幕 / CPU / GPU / 内存 / 功率 实时监控 &nbsp;·&nbsp; 双击桌面快捷方式即可打开</div>
+
+  <div class="grid">
+    <div class="card wide">
+      <div class="k">屏幕</div>
+      <div class="v" id="screen">—</div>
+      <div class="bar"><i id="screenBar"></i></div>
+    </div>
+    <div class="card">
+      <div class="k">CPU 占用</div>
+      <div class="v" id="cpu">—<small> %</small></div>
+      <div class="bar"><i id="cpuBar"></i></div>
+    </div>
+    <div class="card">
+      <div class="k">GPU 占用</div>
+      <div class="v" id="gpu">—<small> %</small></div>
+      <div class="bar"><i id="gpuBar"></i></div>
+    </div>
+    <div class="card">
+      <div class="k">内存</div>
+      <div class="v" id="ram">—</div>
+      <div class="bar"><i id="ramBar"></i></div>
+    </div>
+    <div class="card">
+      <div class="k">GPU 功耗</div>
+      <div class="v" id="pwr">—<small> W</small></div>
+      <div class="bar"><i id="pwrBar"></i></div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button id="btnManual" onclick="toggle('manual')">
+      <span class="t" id="mTitle">省电模式</span>
+      <span class="s" id="mSub">点击开始（黑屏 + 60Hz + 节能方案 + 降频）</span>
+    </button>
+    <button id="btnAuto" onclick="toggle('auto')">
+      <span class="t" id="aTitle">5 分钟自动省电</span>
+      <span class="s" id="aSub">—</span>
+    </button>
+    <button id="btnLock" onclick="toggle('lock')">
+      <span class="t" id="lTitle">锁定省电</span>
+      <span class="s" id="lSub">点击开启 —— 黑屏 + 降频，鼠标键盘都不唤醒</span>
+    </button>
+  </div>
+
+  <div class="row">
+    <span>电源方案：<b id="plan">—</b></span>
+    <span>亮度：<b id="bright">—</b></span>
+    <span>刷新率：<b id="hz">—</b></span>
+    <span>空闲：<b id="idle">—</b></span>
+    <span id="gpuName"></span>
+  </div>
+  <div class="row"><span class="err" id="err"></span></div>
+
+<script>
+let busy=false;
+const $=id=>document.getElementById(id);
+const num=v=>typeof v==='number'?v.toFixed(1):'—';
+
+async function toggle(which){
+  if(busy) return; busy=true;
+  try{
+    const cur = S ? (which==='manual'? S.manual : (which==='lock'? S.lock : S.auto)) : false;
+    await fetch('/api/'+which+'/'+(cur?'off':'on'), {method:'POST'});
+  }catch(e){ $('err').textContent='操作失败: '+e.message; }
+  busy=false;
+  setTimeout(poll, 120);
+}
+
+let S=null;
+async function poll(){
+  try{
+    const r = await fetch('/api/state', {cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    S = await r.json();
+    render();
+    $('err').textContent='';
+  }catch(e){
+    $('st').textContent='已断开'; $('st').className='pill dark';
+    $('err').textContent='连不上本地服务（守护进程可能没在运行）: '+e.message;
+  }
+}
+
+function render(){
+  // 屏幕
+  $('st').textContent = S.dark ? '省电中' : '正常';
+  $('st').className = 'pill ' + (S.dark?'dark':'bright');
+  $('screen').innerHTML = S.dark
+    ? '省电 &nbsp;<small>背光 0 · 60Hz</small>'
+    : '正常 &nbsp;<small>背光 ' + S.brightness.join('/') + ' · ' + S.hz.join('/') + 'Hz</small>';
+  $('screenBar').style.width = S.dark ? '100%' : '18%';
+  $('screenBar').style.background = S.dark ? 'var(--ok)' : 'var(--blue)';
+
+  $('cpu').innerHTML = num(S.cpu)+'<small> %</small>';
+  $('cpuBar').style.width = Math.min(100, S.cpu||0)+'%';
+  $('cpuBar').style.background = (S.cpu>70)?'var(--bad)':(S.cpu>30?'var(--warn)':'var(--blue)');
+
+  $('gpu').innerHTML = (S.gpu==null?'—':num(S.gpu))+'<small> %</small>';
+  $('gpuBar').style.width = Math.min(100, S.gpu||0)+'%';
+
+  $('ram').innerHTML = num(S.ramUsed)+' <small>/ '+num(S.ramTotal)+' GB</small>';
+  $('ramBar').style.width = Math.min(100, 100*S.ramUsed/Math.max(1,S.ramTotal))+'%';
+
+  $('pwr').innerHTML = (S.gpuPower==null?'—':num(S.gpuPower))+'<small> W</small>';
+  $('pwrBar').style.width = Math.min(100, (S.gpuPower||0)/3)+'%';
+  $('pwrBar').style.background = (S.gpuPower>150)?'var(--warn)':'var(--ok)';
+
+  // 按钮 A
+  const bm=$('btnManual');
+  bm.className = S.manual ? 'on' : 'off';
+  $('mTitle').textContent = S.manual ? '省电模式：已开启' : '省电模式：已关闭';
+  $('mSub').textContent = S.manual
+    ? '点击关闭 —— 恢复卓越性能 + 背光 + 刷新率（此期间动鼠标会短暂亮屏 '+S.peekSec+' 秒）'
+    : '点击开启 —— 黑屏 + 60Hz + 节能方案';
+
+  // 按钮 B
+  const ba=$('btnAuto');
+  ba.className = S.auto ? 'on' : '';
+  $('aTitle').textContent = S.auto ? '5 分钟自动省电：已开启' : '5 分钟自动省电：已关闭';
+  $('aSub').textContent = S.auto
+    ? '点击关闭 —— 不再自动进入省电模式（手动按钮仍可用）'
+    : '点击开启 —— 闲置 '+S.idleTarget+' 秒后自动省电';
+
+  // 按钮 C（仅降亮度，锁定）
+  const bl=$('btnLock');
+  bl.className = S.lock ? 'on' : '';
+  $('lTitle').textContent = S.lock ? '锁定省电：已开启' : '锁定省电';
+  $('lSub').textContent = S.lock
+    ? '已锁定 —— 鼠标和键盘都不唤醒，点这个按钮才恢复'
+    : '点击开启 —— 黑屏 + 刷新率降到低档；锁定期间鼠标/键盘都不取消';
+
+  $('plan').textContent = S.plan||'—';
+  $('bright').textContent = S.brightness.join(' / ');
+  $('hz').textContent = S.hz.map(h=>h+'Hz').join(' / ');
+  $('idle').textContent = S.idleSec + ' 秒';
+  $('gpuName').textContent = S.gpuName||'';
+}
+
+poll();
+setInterval(poll, 1000);
+</script>
+</body>
+</html>
